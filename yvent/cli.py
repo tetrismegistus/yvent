@@ -1,7 +1,8 @@
 import argparse
+import textwrap
 from yvent.base import ImageComposer, parse_event_data
 from pathlib import Path
-
+from PIL import ImageFont
 
 def get_parser():
     parser = argparse.ArgumentParser(
@@ -20,39 +21,78 @@ def get_parser():
 def main():
     parser = get_parser()
     args = parser.parse_args()
-    # Use parser function to validate and normalize inputs
+
     data = parse_event_data(
-        title=args.title.lower(),
-        dt_str=args.datetime.lower(),
-        location=args.location.lower(),
+        title=args.title,
+        dt_str=args.datetime,
+        location=args.location,
         qr_text=args.qr_text,
         logo_path=args.logo_path,
         font_path=args.font_path,
         output_path=args.output_path,
     )
 
-    event_date = data["datetime"].strftime("%B %d, %Y").lower()
-    event_time = data["datetime"].strftime("%I:%M %p").lstrip('0').lower()
+    event_date = data["datetime"].strftime("%B %d, %Y")
+    event_time = data["datetime"].strftime("%I:%M %p").lstrip('0')
 
     composer = ImageComposer(gradient=("white", "blue", "vertical"))
-
     composer.add_overlay(data["logo_path"], x=composer.margin, y=composer.margin, scale_to=750)
 
-    angle = 45
-    diagonal_x = int(composer.width / 4.25)
-    diagonal_y = int(composer.height / 2.75)
-    composer.add_text(data["title"], x=diagonal_x, y=diagonal_y, font_size=140, rotate=angle, font_path=data["font_path"])
+    # Load fonts
 
-    info_x = composer.width - 460
-    info_y = int(composer.height / 1.85)
-    composer.add_text(event_date,  x=info_x, y=info_y + 120, font_size=48, font_path=data["font_path"])
-    composer.add_text(event_time,  x=info_x, y=info_y + 200, font_size=48, font_path=data["font_path"])
-    composer.add_text(data["location"], x=info_x, y=info_y + 280, font_size=38, font_path=data["font_path"])
+    title_font = composer.find_fitting_font(
+        data["title"],
+        str(data["font_path"]),
+        max_width=composer.width - 2 * composer.margin,
+        max_height=composer.height - 2 * composer.margin
+    )
+
+
+    info_font = ImageFont.truetype(str(data["font_path"]), 48)
+    location_font = ImageFont.truetype(str(data["font_path"]), 38)
+
+    # --- Centered Tilted Title ---
+    center_x = composer.width // 2
+    center_y = composer.height // 2
+    composer.add_text(data["title"], x=center_x, y=center_y, font=title_font, rotate=45, anchor="mm")
+
+    # --- QR Code ---
+    qr_box_size = 400
+    qr_visual_padding = 60
+    qr_margin = composer.margin + qr_visual_padding
+    qr_x = composer.width - qr_box_size - qr_margin
+    qr_y = composer.height - qr_box_size - qr_margin
+    qr_img_width = 0
 
     if data["qr_text"]:
-        composer.add_qr_code(data["qr_text"], x=info_x - 20, y=info_y + 380, pixel_size=15)
+        qr_img_width = composer.add_qr_code(data["qr_text"], x=qr_x, y=qr_y)
+
+    # --- Info Text Block ---
+    wrapped_location_lines = textwrap.wrap(data["location"], width=40)
+
+    info_lines = [
+        (event_date, info_font),
+        (event_time, info_font),
+    ] + [(line, location_font) for line in wrapped_location_lines]
+
+
+    spacing = 10
+    total_info_height = sum(
+        composer.draw.textbbox((0, 0), text, font=font)[3] - composer.draw.textbbox((0, 0), text, font=font)[1]
+        + spacing for text, font in info_lines
+    ) - spacing
+
+    current_y = qr_y - total_info_height - (spacing * 2)
+
+    for text, font in info_lines:
+        bbox = composer.draw.textbbox((0, 0), text, font=font)
+        text_w = bbox[2] - bbox[0]
+        text_x = qr_x + qr_img_width - text_w# right-align with QR box
+        composer.add_text(text, x=text_x, y=current_y, font=font)
+        current_y += bbox[3] - bbox[1] + spacing
 
     composer.save_to(data["output_path"])
+
 
 if __name__ == '__main__':
     main()
